@@ -1,92 +1,57 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-set -e
-
-RED='\033[0;31m'
+# رنگ‌ها برای نمایش بهتر پیام‌ها
 GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-clear
+echo -e "${YELLOW}Starting Psiphon Conduit Installation...${NC}"
 
-echo -e "${CYAN}"
-echo " ██████╗ ██████╗ ███╗   ██╗██████╗ ██╗   ██╗██╗████████╗"
-echo "██╔════╝██╔═══██╗████╗  ██║██╔══██╗██║   ██║██║╚══██╔══╝"
-echo "██║     ██║   ██║██╔██╗ ██║██║  ██║██║   ██║██║   ██║"
-echo "██║     ██║   ██║██║╚██╗██║██║  ██║██║   ██║██║   ██║"
-echo "╚██████╗╚██████╔╝██║ ╚████║██████╔╝╚██████╔╝██║   ██║"
-echo " ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═════╝  ╚═════╝ ╚═╝   ╚═╝"
-echo ""
-echo -e "${GREEN}Conduit One Click Installer${NC}"
-echo ""
-
+# بررسی دسترسی روت (Root)
 if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}Please run as root${NC}"
+  echo -e "${RED}Please run this script as root (use sudo).${NC}"
   exit 1
 fi
 
-if [ -f /etc/debian_version ]; then
-    echo -e "${GREEN}Debian/Ubuntu detected${NC}"
+# تشخیص معماری سیستم (amd64 یا arm64)
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    CONDUIT_ARCH="amd64"
+elif [ "$ARCH" = "aarch64" ]; then
+    CONDUIT_ARCH="arm64"
 else
-    echo -e "${RED}Unsupported OS${NC}"
+    echo -e "${RED}Unsupported architecture: $ARCH${NC}"
     exit 1
 fi
 
-RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
+echo -e "System architecture detected: ${GREEN}${CONDUIT_ARCH}${NC}"
 
-if [ "$RAM_MB" -lt 512 ]; then
-    echo -e "${RED}Minimum 512MB RAM required${NC}"
+# دانلود آخرین نسخه کاندوئیت
+DOWNLOAD_URL="https://github.com/Psiphon-Inc/conduit/releases/latest/download/conduit-linux-${CONDUIT_ARCH}"
+echo -e "${YELLOW}Downloading Conduit binary...${NC}"
+wget -qO /usr/local/bin/conduit "$DOWNLOAD_URL"
+
+# بررسی موفقیت‌آمیز بودن دانلود
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Failed to download Conduit. Please check your internet connection.${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}RAM: ${RAM_MB}MB${NC}"
+# دادن دسترسی اجرا به فایل
+chmod +x /usr/local/bin/conduit
 
-echo -e "${BLUE}Updating system...${NC}"
-
-apt update -y
-
-echo -e "${BLUE}Installing packages...${NC}"
-
-apt install -y \
-curl \
-wget \
-tar \
-ufw
-
-echo -e "${BLUE}Configuring firewall...${NC}"
-
-ufw allow 22/tcp || true
-ufw allow 80/tcp || true
-ufw allow 443/tcp || true
-ufw --force enable || true
-
-mkdir -p /opt/conduit
-
-cd /opt/conduit
-
-echo -e "${BLUE}Downloading Conduit...${NC}"
-
-wget -O conduit.tar.gz \
-https://github.com/Psiphon-Labs/conduit/releases/latest/download/conduit-linux-amd64.tar.gz
-
-echo -e "${BLUE}Extracting...${NC}"
-
-tar -xzf conduit.tar.gz
-
-chmod +x conduit
-
-echo -e "${BLUE}Creating systemd service...${NC}"
-
-cat > /etc/systemd/system/conduit.service <<EOF
+# ایجاد سرویس systemd برای اجرای دائمی در پس‌زمینه
+echo -e "${YELLOW}Creating systemd service...${NC}"
+cat <<EOF > /etc/systemd/system/conduit.service
 [Unit]
-Description=Psiphon Conduit
+Description=Psiphon Conduit Relay Node
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/conduit
-ExecStart=/opt/conduit/conduit
+User=root
+ExecStart=/usr/local/bin/conduit
 Restart=always
 RestartSec=5
 
@@ -94,26 +59,27 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+# راه‌اندازی و فعال‌سازی سرویس
+echo -e "${YELLOW}Starting Conduit service...${NC}"
 systemctl daemon-reload
-systemctl enable conduit
-systemctl restart conduit
+systemctl enable conduit > /dev/null 2>&1
+systemctl start conduit
 
-sleep 5
+# توقف کوتاه برای اطمینان از اجرای سرویس
+sleep 3
 
+# بررسی وضعیت اجرای سرویس و نمایش به کاربر
 if systemctl is-active --quiet conduit; then
-
-    echo ""
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}Conduit Installed Successfully${NC}"
-    echo -e "${GREEN}Service: conduit${NC}"
-    echo -e "${GREEN}========================================${NC}"
-
+    echo -e "------------------------------------------------------"
+    echo -e "${GREEN}✅ SUCCESS: Psiphon Conduit is installed and running!${NC}"
+    echo -e "------------------------------------------------------"
+    echo -e "You can check the live logs anytime using this command:"
+    echo -e "  ${YELLOW}journalctl -u conduit -f${NC}"
+    echo -e "To stop the service, run:"
+    echo -e "  ${YELLOW}systemctl stop conduit${NC}"
 else
-
-    echo -e "${RED}Conduit failed to start${NC}"
-
-    journalctl -u conduit --no-pager -n 50
-
-    exit 1
-
+    echo -e "------------------------------------------------------"
+    echo -e "${RED}❌ ERROR: Conduit installed but failed to start.${NC}"
+    echo -e "Please check the logs using: journalctl -u conduit -e${NC}"
+    echo -e "------------------------------------------------------"
 fi
