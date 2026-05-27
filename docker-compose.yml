@@ -6,8 +6,3 @@ services:
     env_file:
       - .env
     network_mode: host
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
