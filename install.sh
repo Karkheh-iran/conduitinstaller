@@ -8,8 +8,6 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-INSTALL_DIR="/opt/conduit"
-
 clear
 
 echo -e "${CYAN}"
@@ -20,7 +18,7 @@ echo "██║     ██║   ██║██║╚██╗██║██║
 echo "╚██████╗╚██████╔╝██║ ╚████║██████╔╝╚██████╔╝██║   ██║"
 echo " ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═════╝  ╚═════╝ ╚═╝   ╚═╝"
 echo ""
-echo -e "${GREEN}One Click Conduit Installer${NC}"
+echo -e "${GREEN}Conduit One Click Installer${NC}"
 echo ""
 
 if [ "$EUID" -ne 0 ]; then
@@ -48,41 +46,13 @@ echo -e "${BLUE}Updating system...${NC}"
 
 apt update -y
 
-echo -e "${BLUE}Installing dependencies...${NC}"
+echo -e "${BLUE}Installing packages...${NC}"
 
 apt install -y \
 curl \
 wget \
-git \
-ufw \
-ca-certificates \
-gnupg \
-lsb-release
-
-if ! command -v docker >/dev/null 2>&1; then
-
-    echo -e "${BLUE}Installing Docker...${NC}"
-
-    mkdir -p /etc/apt/keyrings
-
-    curl -fsSL https://download.docker.com/linux/debian/gpg \
-    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-
-    echo \
-    "deb [arch=$(dpkg --print-architecture) \
-    signed-by=/etc/apt/keyrings/docker.gpg] \
-    https://download.docker.com/linux/debian \
-    $(lsb_release -cs) stable" \
-    > /etc/apt/sources.list.d/docker.list
-
-    apt update -y
-
-    apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-fi
-
-systemctl enable docker
-systemctl start docker
+tar \
+ufw
 
 echo -e "${BLUE}Configuring firewall...${NC}"
 
@@ -91,33 +61,58 @@ ufw allow 80/tcp || true
 ufw allow 443/tcp || true
 ufw --force enable || true
 
-mkdir -p ${INSTALL_DIR}
+mkdir -p /opt/conduit
 
-cd ${INSTALL_DIR}
+cd /opt/conduit
 
-echo -e "${BLUE}Downloading files...${NC}"
+echo -e "${BLUE}Downloading Conduit...${NC}"
 
-curl -fsSL https://raw.githubusercontent.com/Karkheh-iran/conduitinstaller/main/docker-compose.yml -o docker-compose.yml
+wget -O conduit.tar.gz \
+https://github.com/Psiphon-Labs/conduit/releases/latest/download/conduit-linux-amd64.tar.gz
 
-curl -fsSL https://raw.githubusercontent.com/Karkheh-iran/conduitinstaller/main/.env.example -o .env
+echo -e "${BLUE}Extracting...${NC}"
 
-echo -e "${BLUE}Starting Conduit...${NC}"
+tar -xzf conduit.tar.gz
 
-docker compose up -d
+chmod +x conduit
 
-sleep 10
+echo -e "${BLUE}Creating systemd service...${NC}"
 
-if docker ps | grep -q conduit; then
+cat > /etc/systemd/system/conduit.service <<EOF
+[Unit]
+Description=Psiphon Conduit
+After=network.target
 
+[Service]
+Type=simple
+WorkingDirectory=/opt/conduit
+ExecStart=/opt/conduit/conduit
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable conduit
+systemctl restart conduit
+
+sleep 5
+
+if systemctl is-active --quiet conduit; then
+
+    echo ""
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}Conduit Installed Successfully${NC}"
+    echo -e "${GREEN}Service: conduit${NC}"
     echo -e "${GREEN}========================================${NC}"
 
 else
 
-    echo -e "${RED}Conduit Failed To Start${NC}"
+    echo -e "${RED}Conduit failed to start${NC}"
 
-    docker logs conduit
+    journalctl -u conduit --no-pager -n 50
 
     exit 1
 
